@@ -1,0 +1,16 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /
+
+spring:
+  application:
+    name: es-op
+  # 留作日后扩展 ES/数据库等配置
+  profiles:
+    active: dev
+
+logging:
+  level:
+    root: INFO
+    org.example: DEBUG
