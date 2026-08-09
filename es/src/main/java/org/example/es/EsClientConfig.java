@@ -15,12 +15,13 @@ import java.util.Arrays;
 /**
  * 自定义 ElasticsearchClient 配置.
  *
- * 关键改动：
- * 1) 重写 clientConfiguration 接管连接参数；
- * 2) 重写 jsonpMapper 开启 ESCAPE_NON_ASCII，
- *    让所有非 ASCII 字符以 \\uXXXX 转义写入 JSON，
- *    规避 ES 8.x 收到 application/vnd.elasticsearch+json 但无 charset 时
- *    按 ISO-8859-1 解码导致中文乱码的问题.
+ * 1) 从 spring.elasticsearch.* 读取连接参数；
+ * 2) 自定义 JsonpMapper：
+ *    - findAndRegisterModules() 注册 JavaTimeModule；
+ *    - ESCAPE_NON_ASCII=true，非 ASCII 字符以 \\uXXXX 写入 JSON，
+ *      避免 ES 8.x 因 charset 协商把 UTF-8 字节当 ISO-8859-1 解码导致中文乱码；
+ *    - 保留 WRITE_DATES_AS_TIMESTAMPS=true（默认），让 LocalDateTime 在 ES 端存为
+ *      epoch_millis（与 FieldIndex.updateTime 用 epoch_millis 格式一致）.
  */
 @Configuration
 @EnableConfigurationProperties(EsProperties.class)
@@ -54,6 +55,7 @@ public class EsClientConfig extends ElasticsearchConfiguration {
     @Override
     public JsonpMapper jsonpMapper() {
         ObjectMapper mapper = new ObjectMapper()
+                .findAndRegisterModules()
                 .configure(JsonGenerator.Feature.ESCAPE_NON_ASCII, true);
         return new JacksonJsonpMapper(mapper);
     }
