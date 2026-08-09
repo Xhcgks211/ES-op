@@ -23,13 +23,34 @@
         <maven.compiler.source>21</maven.compiler.source>
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <!-- 不再单独覆盖 ES 客户端版本，由 spring-boot-dependencies 的 BOM 统一管理，
+             保证 spring-data-elasticsearch 与 elasticsearch-java API 兼容 -->
     </properties>
 
     <dependencies>
-        <!-- Web 启动器：内嵌 Tomcat + Spring MVC，启动后即可提供 HTTP 接口 -->
+        <!-- Web 启动器 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!-- Spring Data Elasticsearch：Repository + 自动装配 ElasticsearchClient -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-elasticsearch</artifactId>
+        </dependency>
+
+        <!-- 配置属性元数据生成 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-configuration-processor</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- ES 官方 Java 客户端（版本由 Spring Boot BOM 管理） -->
+        <dependency>
+            <groupId>co.elastic.clients</groupId>
+            <artifactId>elasticsearch-java</artifactId>
         </dependency>
 
         <!-- 测试支持 -->
@@ -42,7 +63,6 @@
 
     <build>
         <plugins>
-            <!-- Spring Boot Maven 插件：用于 java -jar 启动或 mvn spring-boot:run -->
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>

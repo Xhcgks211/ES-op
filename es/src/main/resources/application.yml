@@ -6,11 +6,17 @@ server:
 spring:
   application:
     name: es-op
-  # 留作日后扩展 ES/数据库等配置
-  profiles:
-    active: dev
+  elasticsearch:
+    uris: http://101.133.175.24:9200
+    username:
+    password:
+    connection-timeout: 10s
+    socket-timeout: 30s
 
 logging:
+  file:
+    name: D:/Java Proj/ES-op/es/app.log
   level:
     root: INFO
-    org.example: DEBUG
+    org.example: INFO
+    co.elastic.clients: INFO
