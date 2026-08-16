@@ -1,6 +1,10 @@
 package org.example.web;
 
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
+import co.elastic.clients.elasticsearch._types.FieldValue;
+import co.elastic.clients.elasticsearch._types.query_dsl.Query;
+import co.elastic.clients.elasticsearch._types.query_dsl.TextQueryType;
+import co.elastic.clients.elasticsearch.core.SearchResponse;
 import co.elastic.clients.elasticsearch.core.UpdateResponse;
 import org.example.domain.FieldIndex;
 import org.example.domain.FieldIndexRepository;
@@ -18,28 +22,32 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.io.IOException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
 /**
- * field_index REST 閹恒儱褰?
+ * field_index REST 接口.
  *
- * <p>娑撳鏁痪锕€鐣鹃敍姝緻code esId}閿涘湕S 閺傚洦銆?_id閿涘鏁辩拫鍐暏閺傝瀵滄稉姘缁撅箑鐣鹃幏鍏煎复閿? * 娓氬顩?{@code "TABLE_user_info_001"}閿涘矂娓舵穱婵婄槈 {@code (type, id)} 缂佸嫬鎮庨崬顖欑.
- * 娑撴艾濮?{@code id} 閺勵垱娅橀柅姘摟濞堢绱濋崣顖炲櫢婢?</p>
+ * <p>主键约定：{@code esId}（ES 文档 _id）由调用方按业务约定拼接，
+ * 例如 {@code "TABLE_user_info_001"}，需保证 {@code (type, bizId)} 组合唯一.
+ * 业务 {@code id}（Java 字段 {@code bizId}）是普通字段，可重复.</p>
  *
  * <ul>
- *   <li>POST   /field-index                - 閸掓稑缂撻敍鍧媠Id 缂傝櫣娓烽弮鎯板殰閸?UUID閿?/li>
- *   <li>PUT    /field-index/{esId}         - 閸忋劑鍣洪弴鎸庡床閿涘澃ave閿涘矁铔?_index API閿?/li>
- *   <li>POST   /field-index/_upsert        - 閹?esId upsert閿涘潈update + doc_as_upsert=true閿涘绱濊箛鍛炊 esId</li>
- *   <li>GET    /field-index/{esId}         - 鐠囷附鍎?/li>
- *   <li>DELETE /field-index/{esId}         - 閸掔娀娅?/li>
- *   <li>GET    /field-index?page=0&size=20 - 閸掑棝銆?/li>
+ *   <li>POST   /field-index                       - 创建（esId 缺省时自动 UUID）</li>
+ *   <li>PUT    /field-index/{esId}                - 全量替换（save，走 _index API）</li>
+ *   <li>POST   /field-index/_upsert               - 按 esId upsert（_update + doc_as_upsert=true），必传 esId</li>
+ *   <li>GET    /field-index/{esId}                - 详情</li>
+ *   <li>DELETE /field-index/{esId}                - 删除</li>
+ *   <li>GET    /field-index?page=0&size=20        - 分页</li>
  *   <li>GET    /field-index/search/type?type=xxx</li>
  *   <li>GET    /field-index/search/name?keyword=xxx</li>
  *   <li>GET    /field-index/search/code?code=xxx</li>
+ *   <li>GET    /field-index/search/hybrid?q=xxx   - 混合搜索（text 模糊 + keyword 精确）</li>
  * </ul>
  */
 @RestController
@@ -47,6 +55,18 @@ import java.util.UUID;
 public class FieldIndexController {
 
     private static final String INDEX = "field_index";
+
+    /** text 类型字段，参与模糊匹配（用 IK 分词器的 search_analyzer = ik_smart）. */
+    private static final List<String> TEXT_FIELDS = List.of(
+            "name^2", "tableName", "code", "description",
+            "entityName", "method", "enumName",
+            "businessDefinition", "applicablScenarios", "businessScope",
+            "ownerErp", "managerErp",
+            "valueName", "valueDescription", "valueCode"
+    );
+
+    /** keyword 类型字段，参与精确匹配. */
+    private static final List<String> KEYWORD_FIELDS = List.of("level", "securityLevel");
 
     private final FieldIndexRepository repository;
     private final ElasticsearchClient client;
@@ -76,22 +96,23 @@ public class FieldIndexController {
     }
 
     /**
-     * upsert閿涙碍瀵?body 娑?{@code esId} upsert閿涘牐鐨熼悽銊︽煙闂団偓娣囨繆鐦?{@code esId} 閸烆垯绔撮敍?     * 闁艾鐖堕幐?{@code type + id} 閹峰吋甯撮敍?
+     * upsert：按 body 中 {@code esId} upsert（调用方需保证 {@code esId} 唯一，
+     * 通常按 {@code type + bizId} 拼接）.
      *
-     * <p>鎼存洖鐪扮挧?ES 閸樼喓鏁?{@code POST /{index}/_update/{esId}} + {@code doc_as_upsert=true}閿?     * 娑?{@link #create} / {@link #update} 閻?{@code _index} 閸忋劑鍣洪弴鎸庡床娑撳秴鎮撻敍?     * 鏉╂瑩鍣烽張宥呭缁旑垯绱伴崠鍝勫瀻鏉╂柨娲?{@code result: "created"} 閹?{@code result: "updated"}.</p>
-     *
-     * <p>濞夈劍鍓伴敍姝緻code _update} + {@code doc} 濡€崇础娑撳绱漿@code doc} 閺勵垬鈧苯鍙忛柌蹇旀禌閹诡潿鈧秷顕㈡稊澶涚礉
-     * 娑撳秳绱堕惃鍕摟濞堝吀绱扮悮顐ｇ缁岀尨绱欐稉宥呮倱娴?MongoDB 閻?$set閿?
-     * 閼汇儵娓?partial update 鐠囬攱鏁奸悽?scripted_upsert + painless script.</p>
+     * <p>底层走 ES 原生 {@code POST /{index}/_update/{esId}} + {@code doc_as_upsert=true}.</p>
      */
     @PostMapping("/_upsert")
-    public ResponseEntity<Map<String, Object>> upsert(@RequestBody FieldIndex doc) throws Exception {
+    public ResponseEntity<Map<String, Object>> upsert(@RequestBody FieldIndex doc) throws IOException {
         if (doc.getEsId() == null || doc.getEsId().isBlank()) {
             return ResponseEntity.badRequest().body(Map.of(
-                    "error", "esId is required for upsert (use 'type_id' or similar composite key)"));
+                    "error", "esId is required for upsert (use 'type_bizId' or similar composite key)"));
+        }
+        if (doc.getUpdateTime() == null) {
+            doc.setUpdateTime(System.currentTimeMillis());
         }
 
         final String esId = doc.getEsId();
+        boolean existedBefore = client.exists(e -> e.index(INDEX).id(esId)).value();
 
         UpdateResponse<FieldIndex> resp = client.update(u -> u
                         .index(INDEX)
@@ -104,8 +125,10 @@ public class FieldIndexController {
         result.put("esId", resp.id());
         result.put("id", doc.getBizId());
         result.put("type", doc.getType());
-        result.put("esResult", resp.result().jsonValue());  // "created" / "updated" / "noop"
+        result.put("esResult", resp.result().jsonValue());
+        result.put("existedBefore", existedBefore);
         result.put("version", resp.version());
+        result.put("updateTime", doc.getUpdateTime());
         return ResponseEntity.ok(result);
     }
 
@@ -144,16 +167,56 @@ public class FieldIndexController {
         return repository.findByCode(code);
     }
 
-    @PostMapping("/_debug_upsert")
-    public ResponseEntity<Map<String, Object>> debugUpsert(@RequestBody FieldIndex doc) throws Exception {
-        com.fasterxml.jackson.databind.ObjectMapper tmpMapper = new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules();
-        tmpMapper.configure(com.fasterxml.jackson.core.JsonGenerator.Feature.ESCAPE_NON_ASCII, true);
-        String s1 = tmpMapper.writeValueAsString(doc);
-        com.fasterxml.jackson.databind.ObjectMapper tmpMapper2 = new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules();
-        String s2 = tmpMapper2.writeValueAsString(doc);
-        Map<String, Object> r = new LinkedHashMap<>();
-        r.put("withEscape", s1);
-        r.put("withoutEscape", s2);
-        return ResponseEntity.ok(r);
+    /**
+     * 混合搜索：{@code q} 同时在 text 字段（多字段模糊）和 keyword 字段（精确）中匹配.
+     *
+     * <p>查询结构：
+     * <pre>
+     *   bool {
+     *     should: [
+     *       multi_match { fields: [所有 text 字段], type: best_fields },
+     *       term        { level }         ,     // 精确
+     *       terms       { securityLevel }        // 精确
+     *     ],
+     *     minimum_should_match: 1
+     *   }
+     * </pre>
+     *
+     * <p>text 字段会自动用 mapping 里的 search_analyzer（即 {@code ik_smart}）分词；
+     * keyword 字段（{@code level}/{@code securityLevel}）做 term 精确匹配.</p>
+     */
+    @GetMapping("/search/hybrid")
+    public List<FieldIndex> hybridSearch(@RequestParam("q") String keyword,
+                                         @RequestParam(defaultValue = "50") int size) throws IOException {
+        final String kw = keyword;
+        if (kw == null || kw.isBlank()) {
+            return List.of();
+        }
+
+        List<Query> shoulds = new java.util.ArrayList<>();
+        // 1) text 字段模糊匹配（用 ik_smart 分词）
+        shoulds.add(Query.of(qb -> qb.multiMatch(m -> m
+                .query(kw)
+                .fields(TEXT_FIELDS)
+                .type(TextQueryType.BestFields))));
+        // 2) keyword 字段精确匹配（level + securityLevel）
+        for (String kf : KEYWORD_FIELDS) {
+            shoulds.add(Query.of(qb -> qb.term(t -> t
+                    .field(kf)
+                    .value(v -> v.stringValue(kw)))));
+        }
+
+        SearchResponse<FieldIndex> resp = client.search(s -> s
+                        .index(INDEX)
+                        .size(size)
+                        .query(qb -> qb.bool(b -> b
+                                .should(shoulds)
+                                .minimumShouldMatch("1")))
+                , FieldIndex.class);
+
+        return resp.hits().hits().stream()
+                .map(hit -> hit.source())
+                .filter(Objects::nonNull)
+                .toList();
     }
 }

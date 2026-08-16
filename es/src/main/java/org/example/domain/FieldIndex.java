@@ -1,5 +1,6 @@
 package org.example.domain;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.elasticsearch.annotations.DateFormat;
@@ -20,8 +21,17 @@ import org.springframework.data.elasticsearch.annotations.FieldType;
  *
  * <p>{@code updateTime} 用 {@code epoch_millis}（Long）存储，
  * 避免 Jackson 默认把 LocalDateTime 序列化成数组后 Spring Data ES 解析失败.</p>
+ *
+ * <p>{@link JsonIgnoreProperties#ignoreUnknown()} = true 是为了：
+ * Spring Data ES 在 {@code _source} 里会写入 {@code _class} 元数据字段
+ * （包含实体 FQCN，用于 Repository 反序列化定位类型），但用裸
+ * {@code ElasticsearchClient.search(..., FieldIndex.class)} 反序列化时
+ * Jackson 默认 strict 模式会报 {@code UnrecognizedPropertyException}.
+ * 这里让 Jackson 忽略未知字段即可，不影响 Repository 走
+ * {@code MappingElasticsearchConverter} 的反序列化路径.</p>
  */
 @Document(indexName = "field_index", createIndex = false)
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class FieldIndex {
 
     /** ES 主键（{@code _id}），由调用方按业务约定拼接. */
